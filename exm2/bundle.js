@@ -1,0 +1,109 @@
+System.register(
+  "chunks:///_virtual/BackPackUI.ts",
+  ["./rollupPluginModLoBabelHelpers.js", "cc"],
+  function (t) {
+    var e, i, o, r, n, a, l, c, s, u;
+    return {
+      setters: [
+        function (t) {
+          ((e = t.applyDecoratedDescriptor),
+            (i = t.inheritsLoose),
+            (o = t.initializerDefineProperty),
+            (r = t.assertThisInitialized));
+        },
+        function (t) {
+          ((n = t.cclegacy),
+            (a = t._decorator),
+            (l = t.Prefab),
+            (c = t.ScrollView),
+            (s = t.instantiate),
+            (u = t.Component));
+        },
+      ],
+      execute: function () {
+        var h, f, p, d, b, y, v;
+        n._RF.push({}, "88c12+9VW9MSa0k23tDsf+r", "BackPackUI", void 0);
+        var m = a.ccclass,
+          w = a.property;
+        t(
+          "BackPackUI",
+          ((h = w({ type: l })),
+          (f = w({ type: c })),
+          m(
+            ((b = e(
+              (d = (function (t) {
+                function e() {
+                  for (
+                    var e, i = arguments.length, n = new Array(i), a = 0;
+                    a < i;
+                    a++
+                  )
+                    n[a] = arguments[a];
+                  return (
+                    (e = t.call.apply(t, [this].concat(n)) || this),
+                    o(e, "slotPrefab", b, r(e)),
+                    o(e, "scrollView", y, r(e)),
+                    o(e, "totalCount", v, r(e)),
+                    (e.home = null),
+                    (e.heroSlots = []),
+                    e
+                  );
+                }
+                i(e, t);
+                var n = e.prototype;
+                return (
+                  (n.init = function (t) {
+                    ((this.heroSlots.length = 0), (this.home = t));
+                    for (var e = 0; e < this.totalCount; ++e) {
+                      var i = this.addHeroSlot();
+                      this.heroSlots.push(i);
+                    }
+                  }),
+                  (n.addHeroSlot = function () {
+                    var t = s(this.slotPrefab);
+                    return (this.scrollView.content.addChild(t), t);
+                  }),
+                  (n.show = function () {
+                    ((this.node.active = !0), this.node.emit("fade-in"));
+                  }),
+                  (n.hide = function () {
+                    ((this.node.active = !1), this.node.emit("fade-out"));
+                  }),
+                  e
+                );
+              })(u)).prototype,
+              "slotPrefab",
+              [h],
+              {
+                configurable: !0,
+                enumerable: !0,
+                writable: !0,
+                initializer: function () {
+                  return null;
+                },
+              }
+            )),
+            (y = e(d.prototype, "scrollView", [f], {
+              configurable: !0,
+              enumerable: !0,
+              writable: !0,
+              initializer: function () {
+                return null;
+              },
+            })),
+            (v = e(d.prototype, "totalCount", [w], {
+              configurable: !0,
+              enumerable: !0,
+              writable: !0,
+              initializer: function () {
+                return 0;
+              },
+            })),
+            (p = d))
+          ) || p)
+        );
+        n._RF.pop();
+      },
+    };
+  }
+);
