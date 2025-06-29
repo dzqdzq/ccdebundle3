@@ -4,6 +4,9 @@
     "@babel/parser": "^7.27.7",
     "@babel/traverse": "^7.27.7",
     "@wakaru/unminify": "^0.2.2",
-    "prettier": "^3.6.2"
+    "acorn": "^8.15.0",
+    "jscodeshift": "^17.3.0",
+    "prettier": "^3.6.2",
+    "vm2": "^3.9.19"
   }
 }

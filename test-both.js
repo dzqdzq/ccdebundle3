@@ -3,22 +3,13 @@ const path = require('path');
 
 async function testBoth() {
   console.log('=== Testing exm/bundle.js ===');
-  await processBundle(
-    path.join(__dirname, 'exm', 'bundle.js'),
-    path.join(__dirname, 'exm')
-  );
-  
-  console.log('\n=== Testing exm2/bundle.js ===');
-  await processBundle(
-    path.join(__dirname, 'exm2', 'bundle.js'),
-    path.join(__dirname, 'exm2')
-  );
-
-  console.log('\n=== Testing exm3/bundle.js ===');
-  await processBundle(
-    path.join(__dirname, 'exm3', 'bundle.js'),
-    path.join(__dirname, 'exm3')
-  );
+  for(let i=1; i<=4; i++){
+    console.log(`=== Testing exm${i}/bundle.js ===`);
+    await processBundle(
+      path.join(__dirname, `exm${i}`, 'bundle.js'),
+      path.join(__dirname, `exm${i}`)
+    );
+  }
 }
 
 testBoth().catch(console.error);

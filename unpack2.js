@@ -127,10 +127,25 @@ function transformerSystemjs(bundleCode) {
         const keyArg = stmt.expression.arguments[0];
         const valueArg = stmt.expression.arguments[1];
         if (keyArg.type === "StringLiteral") {
-          exportCalls.push({
-            name: keyArg.value,
-            value: valueArg,
-          });
+          // 检查value参数是否是逗号表达式
+          if (valueArg.type === 'SequenceExpression') {
+            // 处理逗号表达式：将前面的表达式作为独立语句，最后一个作为导出值
+            const sequenceExpressions = valueArg.expressions;
+            const precedingExpressions = sequenceExpressions.slice(0, -1);
+            const finalExpression = sequenceExpressions[sequenceExpressions.length - 1];
+            
+            exportCalls.push({
+              name: keyArg.value,
+              value: finalExpression,
+              precedingExpressions: precedingExpressions
+            });
+          } else {
+            exportCalls.push({
+              name: keyArg.value,
+              value: valueArg,
+              precedingExpressions: []
+            });
+          }
         }
       }
     });
@@ -174,6 +189,15 @@ function transformerSystemjs(bundleCode) {
   // 生成module.exports
   if (exportCalls.length > 0) {
     exportCalls.forEach((exportCall) => {
+      // 先生成逗号表达式中的前置语句
+      if (exportCall.precedingExpressions && exportCall.precedingExpressions.length > 0) {
+        exportCall.precedingExpressions.forEach((expr) => {
+          const exprCode = generate(expr).code;
+          result += `${exprCode};\n`;
+        });
+      }
+      
+      // 然后生成最终的导出语句
       const valueCode = generate(exportCall.value).code;
       result += `module.exports["${exportCall.name}"] = ${valueCode};\n`;
     });
