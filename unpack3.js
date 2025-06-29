@@ -1,5 +1,63 @@
 const fs = require('fs');
 
+function analyzeClassCode(classCode, classInfo) {
+    console.log(`\n=== 分析类代码: ${classInfo.classType} ===`);
+    
+    // 查找所有function关键字
+    const functionMatches = [...classCode.matchAll(/function/g)];
+    console.log(`找到 ${functionMatches.length} 个function关键字`);
+    
+    if (functionMatches.length >= 2) {
+        const secondFunctionIndex = functionMatches[1].index;
+        console.log(`第二个function关键字位置: ${secondFunctionIndex}`);
+        
+        // 从第二个function开始，提取构造函数体
+        // 构造函数通常是 function t() { ... } 的形式
+        const constructorPattern = /function\s+\w+\s*\([^)]*\)\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}/;
+        const constructorMatch = classCode.slice(secondFunctionIndex).match(constructorPattern);
+        
+        if (constructorMatch) {
+            const constructorBody = constructorMatch[1].trim();
+            console.log(`构造函数体内容: ${constructorBody}`);
+            
+            // 解析构造函数体中的赋值语句
+            parseAssignments(constructorBody, classInfo);
+        } else {
+            console.log('未找到构造函数体');
+        }
+    } else {
+        console.log('未找到足够的function关键字');
+    }
+}
+
+function parseAssignments(constructorBody, classInfo) {
+    console.log('\n=== 解析赋值语句 ===');
+    
+    // 匹配 this.propertyName = value 的模式
+    const assignmentPattern = /this\.(\w+)\s*=\s*([^,;]+)/g;
+    
+    let match;
+    while ((match = assignmentPattern.exec(constructorBody)) !== null) {
+        const propertyName = match[1];
+        const valueStr = match[2].trim();
+        
+        // init字段的格式是："${提取的内容}"
+        const initValue = `${valueStr}`;
+        
+        // 存储到classInfo.props中
+        classInfo.props[propertyName] = {
+            "init": initValue,
+            "isdecorated": false,
+            "isStatic": false,
+            "type": ""
+        };
+        
+        console.log(`发现赋值: this.${propertyName} = ${valueStr} (存储为: ${initValue})`);
+    }
+}
+
+
+
 function analyzeCode(code) {
   const analysis = {
     uuid: '',
@@ -101,12 +159,7 @@ function analyzeCode(code) {
       const [, varName, funcName, target, propName, decoratorArray, initValue] = decoratorMatch1;
       
       let cleanInitValue = initValue.trim();
-      if (cleanInitValue === 'null') {
-        cleanInitValue = 'null';
-      } else if (cleanInitValue.match(/^\d+$/)) {
-        cleanInitValue = parseInt(cleanInitValue);
-      }
-      
+
       // 判断type - 如果装饰器数组包含Node相关的引用，则type为Node
       let type = '';
       if (decoratorArray.includes('u') || decoratorArray.includes('Node')) {
@@ -114,7 +167,7 @@ function analyzeCode(code) {
       }
       
       const propInfo = {
-        init: cleanInitValue,
+        init: `${cleanInitValue}`,
         isdecorated: true,
         isStatic: false,
         type: type
@@ -132,11 +185,6 @@ function analyzeCode(code) {
       const [, propName, decoratorArray, initValue] = decoratorMatch2;
       
       let cleanInitValue = initValue.trim();
-      if (cleanInitValue === 'null') {
-        cleanInitValue = 'null';
-      } else if (cleanInitValue.match(/^\d+$/)) {
-        cleanInitValue = parseInt(cleanInitValue);
-      }
       
       // 判断type - 如果装饰器数组包含相关的引用
       let type = '';
@@ -145,7 +193,7 @@ function analyzeCode(code) {
       }
       
       const propInfo = {
-        init: cleanInitValue,
+        init: `${cleanInitValue}`,
         isdecorated: true,
         isStatic: false,
         type: type
@@ -157,10 +205,14 @@ function analyzeCode(code) {
       }
     }
      
-    // 为每个导出的类设置classCode
+    // 为每个导出的类设置classCode并进行详细分析
     for (const className of exportedClasses) {
       if (classCodeMatch) {
         analysis.classes[className].classCode = classCodeMatch[0];
+        
+        // 调用analyzeClassCode方法进行详细分析
+        console.log(`\n=== 分析类 ${className} ===`);
+        analyzeClassCode(analysis.classes[className].classCode, analysis.classes[className]);
       }
     }
 
