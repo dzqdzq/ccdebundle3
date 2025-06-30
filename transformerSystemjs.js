@@ -203,7 +203,10 @@ function transformerSystemjs(bundleCode) {
     });
   }
   console.log(result);
-  return result;
+  return {
+    fileName: moduleName.split("/").pop(),
+    code: result,
+  };
 }
 
 // 提取setter函数中的导入映射
@@ -258,6 +261,6 @@ function extractImportMappings(setterFunction) {
   return mappings;
 }
 
-// 从命令行参数获取输入文件，如果没有提供则使用默认文件
-const inputFile = process.argv[2] || "demo.js";
-transformerSystemjs(fs.readFileSync(inputFile, "utf8"));
+module.exports = {
+  transformerSystemjs
+}
