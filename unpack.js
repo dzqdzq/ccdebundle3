@@ -3,7 +3,7 @@ const path = require('path');
 const { saveMeta } = require('./saveMeta');
 const {clearRFPush} = require('./clearRFPush');
 const {transformerSystemjs} = require('./transformerSystemjs');
-const {analyzeCode} = require('./analyzeCode');
+const {getTsCode} = require('./analyzeCode');
 const {decompressCode} = require('./decompressCode');
 async function processBundle(bundlePath, outputDir = 'output') {
   try {
@@ -16,8 +16,10 @@ async function processBundle(bundlePath, outputDir = 'output') {
     const deCode = decompressCode(noRFCode);
     console.log('decompressCode:', deCode);
 
-    // const analysis = analyzeCode(noRFCode);
-    // console.log('提取到的classes:', JSON.stringify(analysis, null, 2));
+    console.log('===== tsCode =====');
+    const tsCode = getTsCode(deCode);
+    console.log(tsCode);
+    await fs.writeFile(path.join(outputDir, fileName), tsCode, 'utf-8');
   } catch (error) {
     console.error(`Error processing ${bundlePath}:`, error);
   }
@@ -26,9 +28,9 @@ async function processBundle(bundlePath, outputDir = 'output') {
 if(require.main === module){
   // processBundle('exm/BackPackUI-bundle.js');
   // processBundle('exm/HeroSlot-bundle.js');
-  // processBundle('exm/HomeUI-bundle.js');
+  processBundle('exm/HomeUI-bundle.js');
   // processBundle('exm/Loader-bundle.js');
-  processBundle('exm/MyTest-bundle.js');
+  // processBundle('exm/MyTest-bundle.js');
   // processBundle('exm/SceneList-bundle.js');
 }
 
