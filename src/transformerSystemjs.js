@@ -202,7 +202,6 @@ function transformerSystemjs(bundleCode) {
       result += `module.exports["${exportCall.name}"] = ${valueCode};\n`;
     });
   }
-  console.log(result);
   return {
     fileName: moduleName.split("/").pop(),
     code: result,
