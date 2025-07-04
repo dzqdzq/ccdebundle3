@@ -1,19 +1,16 @@
 const parser = require('@babel/parser');
 const traverse = require('@babel/traverse').default;
 const generator = require('@babel/generator').default;
+const { makeClassAst, makeClassCode } = require('./makeClassAst');
 const t = require('@babel/types');
 const {replaceClass} = require('./replaceClass');
 
-function transformSampleClass(code) {
+function transformSampleClass(match) {
+    const code = match[0];
+    const className = match[1];
+    const constructorArgs = match[2];
+    const extendsName = match[3];
     const ast = parser.parse(code, { allowReturnOutsideFunction: true });
-
-    traverse(ast, {
-        ReturnStatement(path) {
-            if (path.getFunctionParent() === null) {
-                path.remove();
-            }
-        }
-    });
 
     traverse(ast, {
         NewExpression(path) {
@@ -33,17 +30,14 @@ function transformSampleClass(code) {
         }
     });
 
-    let className;
     let prototypeVarName;
-    const methods = [];
-    const staticMethods = [];
-    let constructorNode = t.blockStatement([]);
+    const methodsInfo = [];
+    let constructorNode = null;
 
     // Find class name and prototype variable name
     traverse(ast, {
         FunctionDeclaration(path) {
-            if (!className) {
-                className = path.node.id.name;
+            if (!constructorNode && className === path.node.id.name) {
                 constructorNode = path.node.body;
             }
         },
@@ -84,43 +78,41 @@ function transformSampleClass(code) {
                     }
 
                     if (body) {
-                        const method = t.classMethod(
-                            'method',
-                            t.identifier(methodName),
-                            params,
-                            body,
-                            false, // computed
-                            isStaticMethod // static
-                        );
-                        if (isStaticMethod) {
-                            staticMethods.push(method);
-                        } else {
-                            methods.push(method);
-                        }
+                        const methodInfo = {
+                            name: methodName,
+                            args: params.map(p => generator(p).code).join(', '),
+                            body: generator(body).code.slice(1, -1), // remove brackets
+                            static: isStaticMethod
+                        };
+                        methodsInfo.push(methodInfo);
                     }
                 }
             }
         }
     });
 
-    const classConstructor = t.classMethod(
-        'constructor',
-        t.identifier('constructor'),
-        [],
-        constructorNode
-    );
+    let constructorBody = generator(constructorNode).code.slice(1, -1);
+    if (extendsName) {
+        const superCall = `super(${constructorArgs});`;
+        constructorBody = `${superCall}\n${constructorBody}`;
+    }
 
-    const classBody = t.classBody([classConstructor, ...methods, ...staticMethods]);
-    const classDeclaration = t.classDeclaration(
-        t.identifier(className),
-        null,
-        classBody,
-        []
-    );
-    
-    const newAst = t.file(t.program([classDeclaration]));
+    const constructorInfo = {
+        name: 'constructor',
+        args: constructorArgs,
+        body: constructorBody
+    };
 
-    const { code: classCode } = generator(newAst);
+    const classInfo = {
+        name: className,
+        extends: extendsName,
+        decorators: [],
+        properties: [],
+        methods: [constructorInfo, ...methodsInfo]
+    };
+
+    const classAst = makeClassAst(classInfo);
+    const classCode = makeClassCode(classAst);
 
     return {
         newName: className,
@@ -130,8 +122,12 @@ function transformSampleClass(code) {
 
 
 function transform(code){
-    const pattern = /\(\(\) => \{\s*function\s+(\w+)\(\)\s*\{[\s\S]*?n_prototype[\s\S]*?return\s+\1;\s*\}\)\(\)/;
-
+    const pattern = /\(\(\w+?\) => \{\s*function\s+(\w+)\((.*?)\)\s*\{[\s\S]*?\.prototype;[\s\S]*?return\s+\1;\s*\}\)\((.*?)\)/;
+    // console.log(code.match(pattern)[0]);
+    // console.log(code.match(pattern)[1]);
+    // console.log(code.match(pattern)[2]);
+    // console.log(code.match(pattern)[3]);
+    // return code;
     return replaceClass(code, pattern, transformSampleClass);
 }
 
@@ -144,8 +140,9 @@ if (require.main === module) {
     const codePath = path.join(__dirname, '../demo2.js');
     let code = fs.readFileSync(codePath, 'utf-8');
     let newCode = transform(code);
-    if(newCode !== code){
-        console.log(`Successfully transformed ${codePath}`);
-        fs.writeFileSync(codePath, newCode, 'utf-8');
-    }
+    console.log(newCode);
+    // if(newCode !== code){
+    //     console.log(`Successfully transformed ${codePath}`);
+    //     fs.writeFileSync(codePath, newCode, 'utf-8');
+    // }
 }

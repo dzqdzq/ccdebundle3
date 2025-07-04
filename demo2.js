@@ -1,47 +1,45 @@
-var {
-  applyDecoratedDescriptor,
-initializerDefineProperty,
-} = require('./rollupPluginModLoBabelHelpers.js');
-var {
-  cclegacy,
-_decorator,
-Node,
-} = require('cc');
+import { inheritsLoose } from "./rollupPluginModLoBabelHelpers.js";
+import { cclegacy, assetManager, Prefab } from "cc";
+import { LoaderBase } from "./LoaderBase.ts";
 
-var u, c, s, a;
+export const ResLoader = new (((n) => {
+  function o() {
+    for (var e, o = arguments.length, t = new Array(o), r = 0; r < o; r++)
+      t[r] = arguments[r];
+    return (
+      ((e = n.call.apply(n, [this].concat(t)) || this).hello = "hello"),
+      e
+    );
+  }
+  const o_prototype = o.prototype;
 
-var {
-  ccclass,
-  property
-} = _decorator;
+  o_prototype.loadBundle = (n) =>
+    new Promise((e) => {
+      assetManager.loadBundle(n, (n, o) => {
+        e(o);
+      });
+    });
 
-u = property(Node);
-s = e((c = function () {
-  function t() {
-    initializerDefineProperty(this, "node", s, this), initializerDefineProperty(this, "test", a, this), this._count = 5, this.count22 = 10;
-  }
-  var e = t.prototype;
-  return e.onLoad = function () {
-    console.log("onLoad", this._count);
-  }, e.getCount1 = function (ad, dbf, ...atgs) {
-    return this._count;
-  }, t.getCount2 = function () {
-    return 5;
-  }, t;
-}()).prototype, "node", [u], {
-  configurable: !0,
-  enumerable: !0,
-  writable: !0,
-  initializer: function () {
-    return null;
-  }
-});
-a = e(c.prototype, "test", [property], {
-  configurable: !0,
-  enumerable: !0,
-  writable: !0,
-  initializer: function () {
-    return 100;
-  }
-});
-module.exports["MyTest"] = c;
+  o_prototype.loadPrefab = (n, e) =>
+    new Promise((o) => {
+      e.load(n, Prefab, (n, e) => {
+        o(e);
+      });
+    });
+
+  o_prototype.loadScene = (n, e) =>
+    new Promise((o) => {
+      e.loadScene(n, (n, e) => {
+        o(e);
+      });
+    });
+
+  o_prototype.loadSpriteFrame = (n, e) =>
+    new Promise((o) => {
+      e.load(n, (n, e) => {
+        o(e);
+      });
+    });
+
+  return o;
+})(LoaderBase))();

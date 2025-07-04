@@ -1,516 +1,393 @@
 const fs = require("fs");
+const parser = require("@babel/parser");
+const t = require("@babel/types");
+const traverse = require("@babel/traverse").default;
+const generator = require("@babel/generator").default;
+const { makeClassAst, makeClassCode } = require("./makeClassAst");
 
-function buildVariableMap(code) {
-  const variableMap = new Map();
+function getTypeFromDecorators(decorators) {
+  if (!decorators || !Array.isArray(decorators)) {
+    return null;
+  }
 
-  // 解析导入语句
-  const importPattern = /var\s*\{([^}]+)\}\s*=\s*require\([^)]+\);/g;
-  let match;
+  const regex1 = /(?:type|property)\s*\(\s*(\w+)\s*\)/;
+  const regex2 = /property\s*\(\s*\{[\s\S]*?type\s*:\s*(\w+)/;
 
-  while ((match = importPattern.exec(code)) !== null) {
-    const destructureContent = match[1];
+  for (const decoratorStr of decorators) {
+    let match = decoratorStr.match(regex1);
+    if (match && match[1]) {
+      return match[1];
+    }
 
-    // 解析解构内容
-    const items = destructureContent.split(",");
-    for (const item of items) {
-      const trimmed = item.trim();
-
-      // 匹配 originalName: compressedName 格式
-      const colonMatch = trimmed.match(/^(\w+):\s*(\w+)$/);
-      if (colonMatch) {
-        const originalName = colonMatch[1];
-        const compressedName = colonMatch[2];
-        variableMap.set(compressedName, originalName);
-      }
-      // 匹配简单的 name 格式（没有重命名）
-      else {
-        const simpleMatch = trimmed.match(/^(\w+)$/);
-        if (simpleMatch) {
-          const name = simpleMatch[1];
-          variableMap.set(name, name);
-        }
-      }
+    match = decoratorStr.match(regex2);
+    if (match && match[1]) {
+      return match[1];
     }
   }
 
-  // 解析变量赋值 - 支持多种模式
-
-  // 模式1: var = func(arg) - 处理 u = property(Node)
-  const assignmentPattern1 = /(\w+)\s*=\s*(\w+)\s*\(\s*(\w+)\s*\)/g;
-  while ((match = assignmentPattern1.exec(code)) !== null) {
-    const [, varName, funcName, argName] = match;
-
-    // 如果funcName在映射中，则建立引用链
-    if (variableMap.has(funcName) && variableMap.has(argName)) {
-      const resolvedFunc = variableMap.get(funcName);
-      const resolvedArg = variableMap.get(argName);
-
-      // 如果是property(Node)这样的调用，则varName指向Node
-      if (resolvedFunc === "property") {
-        variableMap.set(varName, resolvedArg);
-      }
-    }
-  }
-
-  // 模式2: var = func(literal) - 处理 u = property(Node) 其中Node是字面量
-  const assignmentPattern2 =
-    /(\w+)\s*=\s*(\w+)\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/g;
-  while ((match = assignmentPattern2.exec(code)) !== null) {
-    const [, varName, funcName, argName] = match;
-
-    // 如果funcName在映射中
-    if (variableMap.has(funcName)) {
-      const resolvedFunc = variableMap.get(funcName);
-
-      // 如果是property(Node)这样的调用，则varName指向Node（字面量）
-      if (resolvedFunc === "property") {
-        variableMap.set(varName, argName);
-      }
-    }
-  }
-
-  // 模式3: var = resolvedFunc(arg) - 处理已解析的函数调用
-  const assignmentPattern3 =
-    /(\w+)\s*=\s*property\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/g;
-  while ((match = assignmentPattern3.exec(code)) !== null) {
-    const [, varName, argName] = match;
-    variableMap.set(varName, argName);
-  }
-
-  return variableMap;
+  return null;
 }
 
-function resolveVariableType(variable, variableMap) {
-  // 递归解析变量引用
-  let current = variable;
-  const visited = new Set();
-
-  while (variableMap.has(current) && !visited.has(current)) {
-    visited.add(current);
-    current = variableMap.get(current);
+function getReturnValue(node) {
+  if (!node || node.type !== "ObjectExpression") {
+    return null;
   }
 
-  return current;
-}
-
-function escapeRegExp(string) {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function analyzeClassCode(classCode, classInfo) {
-  console.log("Analyzing class code...");
-  // 提取构造函数名和原型变量名
-  const protoMatch = classCode.match(/var\s+(\w+)\s*=\s*(\w+)\.prototype/);
-  if (!protoMatch) {
-    console.log("Could not find prototype match.");
-    return;
-  }
-
-  const protoVar = protoMatch[1]; // e.g., e
-  const constructorName = protoMatch[2]; // e.g., t
-  console.log(`constructorName: ${constructorName}, protoVar: ${protoVar}`);
-
-  // 提取方法
-  const methodPattern = new RegExp(
-    `(?:${escapeRegExp(constructorName)}|${escapeRegExp(protoVar)})\\.(\\w+)\\s*=\\s*(function\\s*\\([^)]*\\)\\s*\\{[\\s\\S]*?\\})`,
-    "g"
+  const initializerProp = node.properties.find(
+    (p) => p.key.name === "initializer"
   );
-  let match;
-  while ((match = methodPattern.exec(classCode)) !== null) {
-    const methodName = match[1];
-    const methodCode = match[2];
-    const isStatic = match[0].startsWith(constructorName + ".");
 
-    classInfo.methods[methodName] = {
-      code: methodCode,
-      isStatic: isStatic,
-    };
+  if (!initializerProp) {
+    return null;
   }
 
-  // 查找所有function关键字
-  const functionMatches = [...classCode.matchAll(/function/g)];
+  let functionNode = null;
+  if (initializerProp.type === "ObjectMethod") {
+    functionNode = initializerProp;
+  } else if (initializerProp.type === "ObjectProperty") {
+    functionNode = initializerProp.value;
+  }
 
-  if (functionMatches.length >= 2) {
-    const secondFunctionIndex = functionMatches[1].index;
+  if (!functionNode || functionNode.type === "NullLiteral") {
+    return null;
+  }
 
-    // 从第二个function开始，提取构造函数体
-    // 构造函数通常是 function t() { ... } 的形式
-    const constructorPattern = new RegExp(
-      `function\\s+${escapeRegExp(constructorName)}\\s*\\([^)]*\\)\\s*\\{([^}]*(?:\\{[^}]*\\}[^}]*)*)\\}`
-    );
-    const constructorMatch = classCode.match(constructorPattern);
-    console.log("Constructor match:", constructorMatch);
-
-    if (constructorMatch) {
-      const constructorBody = constructorMatch[1];
-
-      // 解析构造函数体中的赋值语句
-      parseAssignments(constructorBody, classInfo);
-
-      // 清理构造函数体
-      // First, remove initializerDefineProperty calls and trim leading/trailing whitespace and commas
-      let cleanedConstructorBody = constructorBody
-        .replace(/initializerDefineProperty\([^)]+\),?/g, "")
-        .trim();
-      cleanedConstructorBody = cleanedConstructorBody.replace(
-        /^[\s,]+|[\s,]+$/g,
-        ""
-      );
-
-      // Then, remove 'this.prop = value' assignments, handling optional parentheses
-      cleanedConstructorBody = cleanedConstructorBody.replace(
-        /\(?\s*this\.(\w+)\s*=\s*[^,;]+\s*\)?,?/g,
-        ""
-      );
-
-      // Final trim and clean up
-      cleanedConstructorBody = cleanedConstructorBody.trim();
-      cleanedConstructorBody = cleanedConstructorBody.replace(
-        /^[\s,]+|[\s,]+$/g,
-        ""
-      );
-
-      if (cleanedConstructorBody) {
-        if (cleanedConstructorBody.startsWith(";")) {
-          cleanedConstructorBody = cleanedConstructorBody.substring(1);
-        }
-        classInfo.constructor = cleanedConstructorBody.trim();
-        console.log("Cleaned constructor body:", cleanedConstructorBody);
+  if (
+    ["FunctionExpression", "ArrowFunctionExpression", "ObjectMethod"].includes(
+      functionNode.type
+    )
+  ) {
+    const body = functionNode.body.body;
+    if (body) {
+      const returnStatement = body.find((s) => s.type === "ReturnStatement");
+      if (returnStatement) {
+        return generator(returnStatement.argument).code;
       }
     }
   }
+
+  return null;
 }
 
-function parseAssignments(constructorBody, classInfo) {
-  // 匹配 this.propertyName = value 的模式
-  const assignmentPattern = /this\.(\w+)\s*=\s*([^,;]+)/g;
-
-  let match;
-  while ((match = assignmentPattern.exec(constructorBody)) !== null) {
-    const propertyName = match[1];
-    const valueStr = match[2].trim();
-
-    // init字段的格式是："${提取的内容}"
-    const initValue = `${valueStr}`;
-
-    // 存储到classInfo.props中
-    classInfo.props[propertyName] = {
-      init: initValue,
-      isdecorated: false,
-      isStatic: false,
-      type: "",
-    };
-  }
+function isClassCode(code) {
+  return (
+    code.includes("prototype;") ||
+    code.includes("static ") ||
+    code.includes("inheritsLoose") ||
+    code.includes("applyDecoratedDescriptor") ||
+    code.includes("class ")
+  );
 }
 
-function analyzeImports(code) {
-  const importStatements = new Set();
-  const requirePattern = /var\s*\{([^}]+)\}\s*=\s*require\((['"])(.*?)\2\);/g;
-  let match;
+function parseClassConstructorAst(constructorAst, classInfo) {
+  const { properties } = classInfo;
+  // console.log("constructorAst===",constructorAst);
+  // 如何遍历constructorAst所有的赋值表达式
+  let beginMemberExpression = -1;
+  constructorAst.body.forEach((node, idx) => {
+    // console.log("constructorAst path===",idx, node);
+    if (
+      t.isExpressionStatement(node) &&
+      t.isAssignmentExpression(node.expression) &&
+      t.isMemberExpression(node.expression.left)
+    ) {
+      console.log(
+        "constructorAst path=2==",
+        idx,
+        node.expression.left,
+        node.expression.right
+      );
+      beginMemberExpression = idx;
+      const property = node.expression.left.property.name;
+      const value = generator(node.expression.right).code;
+      properties.push({
+        name: property,
+        value,
+        static: false,
+        accessibility:
+          property.startsWith("_") || property.endsWith("_")
+            ? "private"
+            : "public",
+      });
+    }else if(beginMemberExpression>0 && !t.isReturnStatement(node)){
+      console.log("constructorAst 表达式异常, 未知调用:", node);
+      throw new Error("constructorAst 表达式异常, 未知调用");
+    }
+  });
+}
 
-  while ((match = requirePattern.exec(code)) !== null) {
-    const importedItems = match[1]
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
-    const modulePath = match[3];
-
-    if (modulePath.includes("rollupPluginModLoBabelHelpers.js")) {
+// class e { ... static}
+function parseClassAstBody(classBodyAst, classInfo) {
+  const constructorAst = classBodyAst.body[0];
+  parseClassConstructorAst(constructorAst.body, classInfo);
+  for (let i = 1; i < classBodyAst.body.length; i++) {
+    const node = classBodyAst.body[i];
+    if (!t.isClassMethod(node)) {
+      console.warn("parseClassAstBody遇到未知表达式:", node);
       continue;
     }
+    classInfo.methods.push({
+      name: node.key.name,
+      args: node.params.map((param) => generator(param).code).join(","),
+      body: node.body.body.map((item) => generator(item).code).join("\n"),
+      static: node.static,
+    });
+  }
+}
 
-    if (importedItems.length > 0) {
-      importStatements.add(
-        `import { ${importedItems.join(", ")} } from '${modulePath}';`
+function processClassAst(codeAst, classInfo) {
+  const classCode = generator(codeAst).code;
+  if ("AssignmentExpression" !== codeAst.type) {
+    throw new Error("Not a class, 期望结构： s = ((t) => {})(Component)");
+  }
+  const callAst = codeAst.right;
+  if ("CallExpression" !== callAst.type) {
+    throw new Error("Not a class, 期望结构： ((t) => {})(Component)");
+  }
+
+  classInfo.extends = "";
+  if (callAst.arguments[0]) {
+    classInfo.extends = callAst.arguments[0].name;
+  }
+
+  const bodys = callAst.callee.body.body;
+  if (classCode.includes("class ") && classCode.includes("static ")) {
+    // es6 和 es5混合模式
+    console.log("class mode:::", codeAst);
+    if (bodys[0].type !== "ClassDeclaration") {
+      throw new Error("Not a class, 期望结构： class e { ... static }");
+    }
+    if (bodys[bodys.length - 1].type !== "ReturnStatement") {
+      throw new Error("Not a class, 期望结构： return e");
+    }
+    // 分析 class xxx { ... }
+    parseClassAstBody(bodys[0].body, classInfo);
+  } else {
+    // es5模式
+    if (!t.isFunctionDeclaration(bodys[0])) {
+      throw new Error("Not a class, 期望结构： function e() { ... }");
+    }
+    parseClassConstructorAst(bodys[0].body, classInfo);
+
+    console.log("es5 mode:::bodys:", bodys);
+    // console.log("es5 mode:::classInfo:", classInfo);
+  }
+
+  for (let i = 1; i < bodys.length - 1; i++) {
+    const node = bodys[i];
+    if (t.isExpressionStatement(node) && t.isCallExpression(node.expression)) {
+      if (node.expression.callee.name === "inheritsLoose") {
+        continue;
+      }
+      throw new Error(
+        "未知结构, 理论上应该除了inheritsLoose, 全局是赋值语句-成员函数赋值"
       );
     }
-  }
+    // const e_prototype = e.prototype;
+    if (
+      i <= 2 &&
+      t.isVariableDeclaration(node) &&
+      node.declarations.length === 1
+    ) {
+      continue;
+    }
+    if (
+      t.isExpressionStatement(node) &&
+      t.isAssignmentExpression(node.expression)
+    ) {
+      const params = node.expression.right.params;
 
-  return Array.from(importStatements).join("\n");
+      classInfo.methods.push({
+        name: node.expression.left.property.name,
+        args: params.map((param) => generator(param).code).join(","),
+        body: node.expression.right.body.body
+          .map((item) => generator(item).code)
+          .join("\n"),
+        static: node.static,
+      });
+    } else {
+      throw new Error(
+        "未知结构, 理论上应该除了inheritsLoose, 全局是赋值语句-成员函数赋值"
+      );
+    }
+    console.log("body::1:", i, node);
+  } // end for
 }
 
-function analyzeCode(code) {
-  // 构建变量映射表
-  const variableMap = buildVariableMap(code);
-
-  const analysis = {
-    classes: {},
+function processDecorators(codeAst, codeAstPath) {
+  const properties = [];
+  const decorators = [];
+  const methods = [];
+  const decoratorRef = {};
+  const classInfo = {
+    properties,
+    decorators,
+    methods,
   };
-
-  try {
-    // 从module.exports语句中提取类导出（排除简单的数值/字符串赋值）
-    const moduleExportsPattern = /module\.exports\["([^"]+)"\]\s*=\s*([^;]+);/g;
-    let exportMatch;
-    const exportedClasses = [];
-
-    while ((exportMatch = moduleExportsPattern.exec(code)) !== null) {
-      const exportedName = exportMatch[1];
-      const exportedValue = exportMatch[2].trim();
-
-      // 只有当导出的是复杂表达式（如函数调用、装饰器等）时才认为是类
-      // 排除简单的数字、字符串等
-      if (
-        !exportedValue.match(/^\d+$/) &&
-        !exportedValue.match(/^["'][^"']*["']$/)
-      ) {
-        exportedClasses.push(exportedName);
-
-        // 初始化类结构
-        analysis.classes[exportedName] = {
-          classCode: "",
-          props: {},
-          methods: {},
-          constructor: "",
-          isccclass: false,
-          classType: "",
-        };
-      }
+  const expressions = codeAst.expressions;
+  for (let i = 0; i < expressions.length - 1; i++) {
+    const expr = expressions[i];
+    if (expr.type === "AssignmentExpression") {
+      const name = expr.left.name;
+      const value = generator(expr.right).code.replace(/\n/g, "");
+      decoratorRef[name] = value;
+    } else {
+      throw new Error("不应该出现其他非赋值表达式");
     }
+  } // end for 提取装饰器信息
 
-    // 识别ccclass装饰器定义
-    // 匹配形如: d = o.ccclass
-    const ccclassDefMatch = code.match(/(\w+)\s*=\s*(\w+)\.ccclass/);
-    let ccclassFunc = null;
-    if (ccclassDefMatch) {
-      ccclassFunc = ccclassDefMatch[1]; // 例如: d
-    }
+  let realClassAst = null;
+  let firstPath = null;
+  // 获取所有的applyDecoratedDescriptor表达式
+  codeAstPath.traverse({
+    AssignmentExpression(path) {
+      if (path.node.right.type === "CallExpression") {
+        const callee = path.node.right.callee;
+        if (callee.name === "applyDecoratedDescriptor") {
+          if (!firstPath) {
+            firstPath = path.parentPath;
+          }
+          const args = path.node.right.arguments;
+          if (args[0].type != "MemberExpression") {
+            throw new Error("Unsupported decorator type:" + args[0].type);
+          }
+          const object = args[0].object;
+          if (object.type === "AssignmentExpression") {
+            realClassAst = object;
+          }
+          let decorators = args[2].elements;
+          const propName = args[1].value;
+          decorators = decorators.map((node) => {
+            if (node.type === "Identifier")
+              return decoratorRef[node.name] || node.name;
+            throw new Error("Unsupported decorator type:" + node.type);
+          });
+          console.log("type===", decorators);
+          const type = getTypeFromDecorators(decorators);
+          const init = getReturnValue(args[3]);
 
-    // 为每个导出的类检查是否有ccclass装饰器
-    for (const className of exportedClasses) {
-      if (ccclassFunc) {
-        // 匹配形如: u = d("SceneManager") 或 u = d()
-        const classDecoratorPattern1 = new RegExp(
-          `(\\w+)\\s*=\\s*${ccclassFunc}\\s*\\(\\s*["']([^"']+)["']\\s*\\)`
-        );
-        const classDecoratorPattern2 = new RegExp(
-          `(\\w+)\\s*=\\s*${ccclassFunc}\\s*\\(\\s*\\)`
-        );
-        const classDecoratorPattern3 = new RegExp(
-          `(\\w+)\\s*=\\s*${ccclassFunc}`
-        );
-
-        const match1 = code.match(classDecoratorPattern1);
-        const match2 = code.match(classDecoratorPattern2);
-        const match3 = code.match(classDecoratorPattern3);
-
-        if (match1) {
-          analysis.classes[className].isccclass = true;
-          analysis.classes[className].classType = match1[2];
-        } else if (match2) {
-          analysis.classes[className].isccclass = true;
-          analysis.classes[className].classType = "";
-        } else if (match3) {
-          analysis.classes[className].isccclass = true;
-          analysis.classes[className].classType = "";
+          properties.push({
+            name: propName,
+            value: init,
+            type,
+            decorators,
+            static: false,
+          });
+          path.remove();
         }
       }
-    }
+    },
+  });
 
-    // 第一步：提取classCode并用空字符串替换
-    // 匹配多种类定义格式
-    const classCodePattern1 =
-      /\(([^)]+\s*=\s*function\s*\([^)]*\)\s*\{[\s\S]*?\})\(\)\)/;
-    const classCodePattern2 =
-      /(h\s*=\s*function\s*\([^)]*\)\s*\{[\s\S]*?\}\([^)]*\))/;
-    const classCodePattern3 =
-      /(function\s*\([^)]*\)\s*\{[\s\S]*?return\s+[^;]+;[\s\S]*?\})/;
-
-    let classCodeMatch =
-      code.match(classCodePattern1) ||
-      code.match(classCodePattern2) ||
-      code.match(classCodePattern3);
-    let simplifiedCode = code;
-    if (classCodeMatch) {
-      simplifiedCode = code.replace(classCodeMatch[0], "");
-    }
-
-    // 模式1: applyDecoratedDescriptor格式
-    const decoratorPattern1 =
-      /(\w+)\s*=\s*(\w+)\s*\(\s*(\w+)?\.prototype,\s*["']([^"']+)["'],\s*\[([^\]]+)\],\s*\{[^}]*initializer\s*:\s*function\s*\(\)\s*\{[^}]*return\s*([^;}]+)[^}]*\}[^}]*\}/g;
-
-    // 模式2: 直接在prototype上定义的格式
-    const decoratorPattern2 =
-      /\.prototype,\s*["']([^"']+)["'],\s*\[([^\]]+)\],\s*\{[^}]*initializer\s*:\s*function\s*\(\)\s*\{[^}]*return\s*([^;}]+)[^}]*\}/g;
-
-    // 处理模式1: applyDecoratedDescriptor格式
-    let decoratorMatch1;
-    while (
-      (decoratorMatch1 = decoratorPattern1.exec(simplifiedCode)) !== null
-    ) {
-      const [, varName, funcName, target, propName, decoratorArray, initValue] =
-        decoratorMatch1;
-
-      let cleanInitValue = initValue.trim();
-
-      // 判断type - 使用动态类型推断
-      let type = "";
-      const decorators = decoratorArray.split(",").map((d) => d.trim());
-      for (const decorator of decorators) {
-        const resolvedType = resolveVariableType(decorator, variableMap);
-        // 检查是否是已知的类型（以大写字母开头的标识符通常是类型）
-        if (resolvedType && /^[A-Z][A-Za-z0-9_]*$/.test(resolvedType)) {
-          type = resolvedType;
-          break;
-        }
-      }
-
-      const propInfo = {
-        init: `${cleanInitValue}`,
-        isdecorated: true,
-        isStatic: false,
-        type: type,
-      };
-
-      // 将属性添加到所有导出的类中
-      for (const className of exportedClasses) {
-        analysis.classes[className].props[propName] = propInfo;
-      }
-    }
-
-    // 处理模式2: 直接在prototype上定义的格式
-    let decoratorMatch2;
-    while (
-      (decoratorMatch2 = decoratorPattern2.exec(simplifiedCode)) !== null
-    ) {
-      const [, propName, decoratorArray, initValue] = decoratorMatch2;
-
-      let cleanInitValue = initValue.trim();
-
-      // 判断type - 使用动态类型推断
-      let type = "";
-      const decorators = decoratorArray.split(",").map((d) => d.trim());
-      for (const decorator of decorators) {
-        const resolvedType = resolveVariableType(decorator, variableMap);
-        // 检查是否是已知的类型（以大写字母开头的标识符通常是类型）
-        if (resolvedType && /^[A-Z][A-Za-z0-9_]*$/.test(resolvedType)) {
-          type = resolvedType;
-          break;
-        }
-      }
-
-      const propInfo = {
-        init: `${cleanInitValue}`,
-        isdecorated: true,
-        isStatic: false,
-        type: type,
-      };
-
-      // 将属性添加到所有导出的类中
-      for (const className of exportedClasses) {
-        analysis.classes[className].props[propName] = propInfo;
-      }
-    }
-
-    // 为每个导出的类设置classCode并进行详细分析
-    for (const className of exportedClasses) {
-      if (classCodeMatch) {
-        analysis.classes[className].classCode = classCodeMatch[0];
-        analyzeClassCode(
-          analysis.classes[className].classCode,
-          analysis.classes[className]
-        );
-      }
-    }
-  } catch (error) {
-    console.error("解析代码时出错:", error.message);
+  if (!realClassAst) {
+    throw new Error("不应该出现找不到类的情况");
   }
 
-  return analysis;
+  if (firstPath && realClassAst) {
+    let parent = firstPath.parent;
+    // 循环目的-类可能存在多个装饰器
+    while (parent && parent.type !== "SequenceExpression") {
+      if (parent.type !== "CallExpression") {
+        // 应该是call expression, 类似ccclass(...)
+        throw new Error("Unexpected parent type: " + parent.type);
+      }
+      const name = parent.callee.name;
+      decorators.push(decoratorRef[name] || name);
+      console.log("parent:::::", parent);
+      parent = parent.parent;
+    }
+    processClassAst(realClassAst, classInfo);
+    // firstPath.replaceWith(realClassAst);
+  }
+
+  decorators.reverse();
+  return classInfo;
 }
 
-function generateTypeScriptCode(className, classInfo) {
-  let classBody = "";
-
-  // Properties
-  for (const propName in classInfo.props) {
-    const prop = classInfo.props[propName];
-    let propDecorators = "";
-    if (prop.isdecorated) {
-      propDecorators = `  @property\n`;
-      if (prop.type) {
-        propDecorators = `  @property(${prop.type})\n`;
-      }
-    }
-    const staticStr = prop.isStatic ? "static " : "";
-    const typeStr = prop.type ? `${prop.type}` : typeof eval(prop.init);
-    const initStr = prop.init ? ` = ${prop.init}` : "";
-    classBody += `${propDecorators}  ${staticStr}${propName}: ${typeStr}${initStr};\n\n`;
-  }
-
-  // Constructor
-  if (classInfo.constructor) {
-    classBody += `  constructor() {\n`;
-    classBody += `    ${classInfo.constructor}\n`;
-    classBody += `  }\n\n`;
-  }
-
-  // Methods
-  for (const methodName in classInfo.methods) {
-    const method = classInfo.methods[methodName];
-    const staticStr = method.isStatic ? "static " : "";
-    const functionMatch = method.code.match(
-      /function\s*\(([^)]*)\)\s*{([\s\S]*)}/
-    );
-    if (functionMatch) {
-      const params = functionMatch[1];
-      const body = functionMatch[2].trim();
-      classBody += `  ${staticStr}${methodName}(${params}) {\n`;
-      if (body) {
-        classBody += `    ${body.replace(/\n/g, "\n    ")}\n`;
-      }
-      classBody += `  }\n\n`;
-    }
-  }
-
-  let tsCode = "";
-  if (classInfo.isccclass) {
-    const classDecoratorType = classInfo.classType
-      ? `"${classInfo.classType}"`
-      : "";
-    tsCode += `@ccclass(${classDecoratorType})\n`;
-  }
-  tsCode += `export class ${className} {\n`;
-  tsCode += classBody;
-  tsCode += `}\n`;
-
-  return tsCode;
+function processNonDecorators(codeAst, codeAstPath) {
+  const properties = [];
+  const decorators = [];
+  const methods = [];
+  const classInfo = {
+    properties,
+    decorators,
+    methods,
+  };
+  return classInfo;
 }
 
-function getTsCode(decompressedCode) {
-  const analysis = analyzeCode(decompressedCode);
-  const imports = analyzeImports(decompressedCode);
-  let fullTsCode = `${imports}\n\n`;
-
-  for (const className in analysis.classes) {
-    const classInfo = analysis.classes[className];
-    const tsCode = generateTypeScriptCode(className, classInfo);
-    fullTsCode += tsCode + "\n";
-  }
-  return fullTsCode;
-}
-
-function main() {
-  const args = process.argv.slice(2);
-
-  if (args.length === 0) {
-    console.log("Usage: node analyzeCode.js <filename>");
+// 返回classInfo
+function analyzeCode(className, codeAst, codeAstPath) {
+  const codeStr = generator(codeAst, { jsescOption: { minimal: true } }).code;
+  if (!codeStr || !isClassCode(codeStr)) {
     return;
   }
 
-  const filename = args[0];
+  const classInfo = {
+    name: className,
+    extends: null,
+    decorators: [],
+    properties: [],
+    methods: [],
+  };
 
-  try {
-    const decompressedCode = fs.readFileSync(filename, "utf8");
-    console.log("Analyzing code structure...");
-    const fullTsCode = getTsCode(decompressedCode);
-    console.log(fullTsCode);
-  } catch (error) {
-    console.error("Error reading or processing file:", error.message);
+  let classCode;
+
+  // console.log('codeAst', codeAst.type);
+  if (codeAst.type === "SequenceExpression") {
+    const lastExpr = codeAst.expressions[codeAst.expressions.length - 1];
+    if (lastExpr.type === "LogicalExpression") {
+      // 说明包含装饰器类
+      Object.assign(classInfo, processDecorators(codeAst, codeAstPath));
+    } else {
+      // 不包含类装饰器的情况
+      Object.assign(classInfo, processNonDecorators(codeAst, codeAstPath));
+    }
+  } else {
+    classCode = codeStr;
   }
+
+  console.log("classInfo::", classInfo);
+  console.log("----replace Code", generator(codeAst).code);
+  return classInfo;
 }
 
-if (require.main === module) {
-  main();
+function getTsCode(code) {
+  const ast = parser.parse(code, {
+    sourceType: "module",
+    plugins: [
+      "typescript",
+      ["decorators", { decoratorsBeforeExport: true }],
+      "classProperties",
+    ],
+  });
+
+  traverse(ast, {
+    ExportNamedDeclaration(path) {
+      console.log("path:::", path);
+      const declaration = path.node.declaration;
+      if (declaration && declaration.type === "VariableDeclaration") {
+        declaration.declarations.forEach((declarator) => {
+          if (declarator.id.type === "Identifier") {
+            const name = declarator.id.name;
+            const valueNode = declarator.init;
+            const classInfo = analyzeCode(name, valueNode, path);
+            if (classInfo) {
+              const classAst = makeClassAst(classInfo);
+              path.scope.removeBinding(name);
+              path.replaceWith(t.exportNamedDeclaration(classAst, [], null));
+              // path.get('declaration').replaceWith(classAst);
+            }
+          }
+        });
+      }
+    },
+  });
+
+  return generator(ast, {
+    jsescOption: { minimal: true },
+    decoratorsBeforeExport: true,
+  }).code;
 }
 
 module.exports = { getTsCode };

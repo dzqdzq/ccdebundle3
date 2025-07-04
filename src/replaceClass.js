@@ -4,7 +4,7 @@ function replaceClass(code, regex, transformer) {
 
     if (match) {
         const iifeContent = match[0]; 
-        const {newBody, newName} = transformer(iifeContent);
+        const {newBody, newName} = transformer(match);
         
         const placeholder = `__TRANSFORM_PLACEHOLDER_${Date.now()}__`;
 
