@@ -331,8 +331,6 @@ function analyzeCode(className, codeAst, codeAstPath) {
     methods: [],
   };
 
-  let classCode;
-
   // console.log('codeAst', codeAst.type);
   if (codeAst.type === "SequenceExpression") {
     const lastExpr = codeAst.expressions[codeAst.expressions.length - 1];
@@ -343,8 +341,6 @@ function analyzeCode(className, codeAst, codeAstPath) {
       // 不包含类装饰器的情况
       Object.assign(classInfo, processNonDecorators(codeAst, codeAstPath));
     }
-  } else {
-    classCode = codeStr;
   }
 
   console.log("classInfo::", classInfo);
