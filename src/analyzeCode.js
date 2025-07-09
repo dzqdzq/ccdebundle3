@@ -345,7 +345,11 @@ function analyzeCode(className, codeAst, codeAstPath) {
 
   console.log("classInfo::", classInfo);
   console.log("----replace Code", generator(codeAst).code);
-  return classInfo;
+  if (classInfo) {
+      const classAst = makeClassAst(classInfo);
+      codeAstPath.scope.removeBinding(className);
+      codeAstPath.replaceWith(t.exportNamedDeclaration(classAst, [], null));
+  }
 }
 
 function getTsCode(code) {
@@ -367,13 +371,7 @@ function getTsCode(code) {
           if (declarator.id.type === "Identifier") {
             const name = declarator.id.name;
             const valueNode = declarator.init;
-            const classInfo = analyzeCode(name, valueNode, path);
-            if (classInfo) {
-              const classAst = makeClassAst(classInfo);
-              path.scope.removeBinding(name);
-              path.replaceWith(t.exportNamedDeclaration(classAst, [], null));
-              // path.get('declaration').replaceWith(classAst);
-            }
+            analyzeCode(name, valueNode, path);
           }
         });
       }
