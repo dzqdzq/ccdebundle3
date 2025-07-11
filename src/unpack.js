@@ -273,9 +273,9 @@ if(require.main === module){
 //   processBundle('exm/AdapterContent-bundle.js');
 //   processBundle('exm/HeroSlot-bundle.js');
 //   processBundle('exm/HomeUI-bundle.js');
-  processBundle('exm/Loader-bundle.js');
+//   processBundle('exm/Loader-bundle.js');
 //   processBundle('exm/MyTest-bundle.js');
-//   processBundle('exm/main-bundle.js');
+  processBundle('exm/main-bundle.js');
 //   processBundle('exm/SceneList-bundle.js');
 }
 

@@ -141,8 +141,9 @@ function processClassAst(codeAst, classInfo) {
     throw new Error("Not a class, 期望结构： s = ((t) => {})(Component)");
   }
   const callAst = codeAst.right;
+  console.log('callAst:', classCode);
   if ("CallExpression" !== callAst.type) {
-    throw new Error("Not a class, 期望结构： ((t) => {})(Component)");
+    throw new Error(`Not a class, type: ${callAst.type} 期望结构： ((t) => {})(Component)`);
   }
 
   classInfo.extends = "";
@@ -196,7 +197,7 @@ function processClassAst(codeAst, classInfo) {
       t.isAssignmentExpression(node.expression)
     ) {
       const params = node.expression.right.params;
-
+      console.log('node.expression.right====',node.expression.left, node.expression.right);
       classInfo.methods.push({
         name: node.expression.left.property.name,
         args: params.map((param) => generator(param).code).join(","),
@@ -252,7 +253,7 @@ function processDecorators(codeAst, codeAstPath) {
             throw new Error("Unsupported decorator type:" + args[0].type);
           }
           const object = args[0].object;
-          if (object.type === "AssignmentExpression") {
+          if (!realClassAst && object.type === "AssignmentExpression" && isClassCode(generator(object.right).code)) {
             realClassAst = object;
           }
           let decorators = args[2].elements;
@@ -274,6 +275,17 @@ function processDecorators(codeAst, codeAstPath) {
             static: false,
           });
           path.remove();
+        }
+      }else if(path.node.left.type === 'MemberExpression'){
+        const object = path.node.left.object;
+        if (!realClassAst && object.type === "AssignmentExpression" && isClassCode(generator(object.right).code)) {
+          realClassAst = object;
+          properties.push({
+            name: path.node.left.property.name,
+            value: generator(path.node.right).code,
+            static: true,
+          })
+          // console.log("cals rrr==:", path.node.right);
         }
       }
     },
@@ -338,6 +350,7 @@ function analyzeCode(className, codeAst, codeAstPath) {
       // 说明包含装饰器类
       Object.assign(classInfo, processDecorators(codeAst, codeAstPath));
     } else {
+      console.log('lastExpr.type:::', lastExpr.type)
       // 不包含类装饰器的情况
       Object.assign(classInfo, processNonDecorators(codeAst, codeAstPath));
     }
@@ -364,7 +377,6 @@ function getTsCode(code) {
 
   traverse(ast, {
     ExportNamedDeclaration(path) {
-      console.log("path:::", path);
       const declaration = path.node.declaration;
       if (declaration && declaration.type === "VariableDeclaration") {
         declaration.declarations.forEach((declarator) => {
