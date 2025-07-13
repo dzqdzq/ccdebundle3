@@ -26,14 +26,12 @@ function parseSystemRegister(jsCode) {
     };
 
     try {
-        // 在沙箱中运行代码
         vm.runInNewContext(jsCode, sandbox);
     } catch (error) {
         console.error('解析代码时出错:', error.message);
         return null;
     }
 
-    // 返回提取的参数
     return {
         moduleName: extractedModuleName,
         dependencies: extractedDeps,
